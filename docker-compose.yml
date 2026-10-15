@@ -1,0 +1,15 @@
+services:
+  sev:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SEV_DB_PATH: /data/sev.sqlite3
+    volumes:
+      - sev-data:/data
+    expose:
+      - "8000"
+    # Put a TLS reverse proxy (Caddy/Nginx/Traefik) in front of this service.
+    # Do not publish port 8000 directly to the public internet.
+volumes:
+  sev-data:
