@@ -1,0 +1,85 @@
+name: Build and test SEV
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SEV_ADMIN_USER: sev-admin
+      SEV_ADMIN_PASSWORD: test-admin-password-not-for-production
+      SEV_SECRET_KEY: test-only-secret-key-at-least-32-characters-long
+      SEV_DB_PATH: ./test-sev.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile app.py
+      - name: API smoke tests
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          import app
+
+          client = TestClient(app.app)
+          assert client.get('/health').status_code == 200
+          assert client.get('/api/status').status_code == 200
+
+          admin = client.post('/api/admin/login', json={
+              'username': 'sev-admin',
+              'password': 'test-admin-password-not-for-production'
+          })
+          assert admin.status_code == 200, admin.text
+          headers = {'Authorization': 'Bearer ' + admin.json()['access_token']}
+
+          created = client.post('/api/admin/accounts', headers=headers, json={
+              'username': 'test_user', 'password': 'strong-test-password',
+              'max_devices': 1, 'note': 'CI test'
+          })
+          assert created.status_code == 200, created.text
+
+          first = client.post('/api/auth/login', json={
+              'username': 'test_user', 'password': 'strong-test-password',
+              'device_id': 'test-device-0001', 'device_label': 'CI device',
+              'app_version': '1.0.0'
+          })
+          assert first.status_code == 200, first.text
+          token = first.json()['session_token']
+
+          blocked = client.post('/api/auth/login', json={
+              'username': 'test_user', 'password': 'strong-test-password',
+              'device_id': 'test-device-0002', 'device_label': 'Second CI device',
+              'app_version': '1.0.0'
+          })
+          assert blocked.status_code == 409, blocked.text
+
+          valid = client.post('/api/auth/validate', json={
+              'session_token': token, 'device_id': 'test-device-0001',
+              'app_version': '1.0.0'
+          })
+          assert valid.status_code == 200, valid.text
+
+          account = client.get('/api/admin/accounts', headers=headers)
+          assert account.status_code == 200, account.text
+          account_id = account.json()[0]['id']
+          locked = client.patch(f'/api/admin/accounts/{account_id}', headers=headers,
+                                json={'key_active': False})
+          assert locked.status_code == 200, locked.text
+
+          revoked = client.post('/api/auth/validate', json={
+              'session_token': token, 'device_id': 'test-device-0001',
+              'app_version': '1.0.0'
+          })
+          assert revoked.status_code == 401, revoked.text
+          print('SEV smoke tests passed')
+          PY
+      - name: Docker image build
+        run: docker build -t phamquangios-sev:test .
