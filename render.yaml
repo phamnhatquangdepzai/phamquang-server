@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: phamquangios-sev
+    runtime: docker
+    plan: starter
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: sev-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SEV_ADMIN_USER
+        sync: false
+      - key: SEV_ADMIN_PASSWORD
+        sync: false
+      - key: SEV_SECRET_KEY
+        generateValue: true
+      - key: SEV_DB_PATH
+        value: /data/sev.sqlite3
